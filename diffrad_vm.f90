@@ -1,5 +1,7 @@
 !==============================================================
-!     diffrad_gen.f  -- version 2.0 (fully fixed)
+!     diffrad_vm.f90 -- combined vector meson generator
+!     phi (ivec=3, exp t-form) + J/psi (ivec=4, dipole t-form)
+!     with TUNED defaults (June 2026); parameters via input file
 !
 !     MC Generator for diffractive vector meson electroproduction
 !     with QED radiative corrections (collinear approximation)
@@ -15,7 +17,138 @@
 !       7: gamma        (final, hard events only)
 !==============================================================
 
+!==============================================================
+!  input_mod: keyword-based input reader
+!  Format:  key  value  [value2]      (! = comment)
+!  Range parameters:  key  min  max
+!==============================================================
+      module input_mod
+      implicit none
+
+      integer, parameter :: npars = 29
+
+      type param_t
+        character(len=32) :: name
+        integer  :: itype    ! 1=real*8, 2=integer
+        integer  :: nvals    ! 1=single value, 2=range (min max)
+        real*8   :: rval     ! value or range min
+        real*8   :: rval2    ! range max (nvals==2 only)
+        integer  :: ival
+        real*8   :: minval, maxval
+        logical  :: is_set
+      end type param_t
+
+      contains
+
+!--------------------------------------------------------------
+      subroutine read_input(fname, pars, np)
+      implicit none
+      character(len=*),  intent(in)    :: fname
+      integer,           intent(in)    :: np
+      type(param_t),     intent(inout) :: pars(np)
+      character(len=256) :: line, clean, key, rest
+      integer :: ios, ios2, i, ic, p1
+      logical :: found
+      open(9, file=trim(fname), status='old', iostat=ios)
+      if(ios /= 0) then
+        write(*,*) 'ERROR: cannot open: '//trim(fname);  stop
+      endif
+      do
+        read(9,'(A)',iostat=ios) line
+        if(ios /= 0) exit
+        ic = index(line,'!')
+        if(ic > 0) line = line(1:ic-1)
+        clean = adjustl(line)
+        if(len_trim(clean) == 0) cycle
+        p1 = scan(clean,' '//char(9))
+        if(p1 <= 1) cycle
+        key  = clean(1:p1-1)
+        rest = adjustl(clean(p1:))
+        if(len_trim(rest) == 0) cycle
+        found = .false.
+        do i = 1, np
+          if(trim(key) == trim(pars(i)%name)) then
+            if(pars(i)%itype == 1) then
+              if(pars(i)%nvals == 2) then
+                read(rest,*,iostat=ios2) pars(i)%rval, pars(i)%rval2
+              else
+                read(rest,*,iostat=ios2) pars(i)%rval
+              endif
+            else
+              read(rest,*,iostat=ios2) pars(i)%ival
+            endif
+            if(ios2 /= 0) then
+              write(*,*) 'ERROR: bad value for: '//trim(key);  stop
+            endif
+            pars(i)%is_set = .true.
+            found = .true.
+          endif
+        end do
+        if(.not.found) write(*,*) 'WARNING: unknown parameter: '//trim(key)
+      end do
+      close(9)
+      end subroutine read_input
+
+!--------------------------------------------------------------
+      subroutine validate(pars, np)
+      implicit none
+      integer,       intent(in) :: np
+      type(param_t), intent(in) :: pars(np)
+      integer :: i
+      do i = 1, np
+        if(.not.pars(i)%is_set) then
+          write(*,*) 'ERROR: missing parameter: '//trim(pars(i)%name); stop
+        endif
+        if(pars(i)%itype == 1) then
+          if(pars(i)%rval < pars(i)%minval .or. pars(i)%rval > pars(i)%maxval) then
+            write(*,*) 'ERROR: out of range: ', trim(pars(i)%name), &
+                       '  val=', pars(i)%rval;  stop
+          endif
+          if(pars(i)%nvals == 2) then
+            if(pars(i)%rval2 < pars(i)%minval .or. &
+               pars(i)%rval2 > pars(i)%maxval) then
+              write(*,*) 'ERROR: out of range: ', trim(pars(i)%name), &
+                         '  max=', pars(i)%rval2;  stop
+            endif
+            if(pars(i)%rval > pars(i)%rval2) then
+              write(*,*) 'ERROR: min > max for: '//trim(pars(i)%name); stop
+            endif
+          endif
+        else
+          if(dble(pars(i)%ival) < pars(i)%minval .or. &
+             dble(pars(i)%ival) > pars(i)%maxval) then
+            write(*,*) 'ERROR: out of range: ', trim(pars(i)%name), &
+                       '  val=', pars(i)%ival;  stop
+          endif
+        endif
+      end do
+      end subroutine validate
+
+!--------------------------------------------------------------
+      subroutine print_params(pars, np)
+      implicit none
+      integer,       intent(in) :: np
+      type(param_t), intent(in) :: pars(np)
+      integer :: i
+      write(*,'(a)') '=== DIFFRAD input parameters ==='
+      do i = 1, np
+        if(pars(i)%itype == 2) then
+          write(*,'(2X,A12,I10)') trim(pars(i)%name), pars(i)%ival
+        else if(pars(i)%nvals == 2) then
+          write(*,'(2X,A12,F10.4,A4,F10.4)') &
+            trim(pars(i)%name), pars(i)%rval,' .. ',pars(i)%rval2
+        else
+          write(*,'(2X,A12,F12.5)') trim(pars(i)%name), pars(i)%rval
+        endif
+      end do
+      write(*,'(a)') '================================'
+      end subroutine print_params
+
+      end module input_mod
+
+!==============================================================
       program diffrad_gen
+      use input_mod
       implicit real*8(a-h,o-z)
       real*4 urand
 
@@ -26,10 +159,13 @@
       common/tpar/tslope
       common/vv1vv2/aa1,aa2,bb,sib
       common/ivv/vcurr,cutv
-      common/cuts/wmin2
+      common/cuts/wmin2,ymin,ymax
       common/amf2/taa,atm(8,6),sfm0(8)
       common/sigsig/sigmat0,sigmal0
       common/pri/ipri
+      common/phimodel/phi_alf1,phi_alf2,phi_alf3,phi_nuT,phi_bt,phi_cR
+      common/jpsimodel/pj_alf1,pj_alf2,pj_alf3,pj_nuT,pj_mg2,pj_cR
+      real*8 pj_alf1,pj_alf2,pj_alf3,pj_nuT,pj_mg2,pj_cR
 
       real*8 k1(4),k2(4),ptar(4),ph(4),pp(4),kgam(4),pip(4),pim(4)
       integer*4 iy
@@ -37,6 +173,7 @@
       character(len=256) :: input_file, lund_file, stat_file, vdist_file
       character(len=256) :: cl_arg
       integer :: narg_tot, iarg_cur, llen
+      type(param_t) :: pars(npars)
 
 !     Parse command-line arguments: -input <file>  -lund <file>
       input_file = 'gen_input.dat'
@@ -55,28 +192,167 @@
         iarg_cur = iarg_cur + 1
       enddo
 
-!     Read input
-      open(unit=8, file=trim(input_file), status='old')
-      read(8,*) bmom
-      read(8,*) tmom
-      read(8,*) lepton
-      read(8,*) ivec
-      read(8,*) cutv
-      read(8,*) nev
-      read(8,*) iy
-      read(8,*) q2min
-      read(8,*) q2max
-      read(8,*) ymin
-      read(8,*) ymax
-      read(8,*) tmin
-      read(8,*) tmax
-      read(8,*) tslope      ! exponential t-slope b (GeV^-2)
-      read(8,*) iborn       ! 0=full RC,  1=Born only
-      read(8,*) wmin        ! minimum W (GeV); events with W < wmin rejected
-      read(8,*) xbmin       ! xB minimum
-      read(8,*) xbmax       ! xB maximum
-      close(8)
-      wmin2 = wmin*wmin
+!     Initialize parameter table
+!                   name    itype nvals rval  rval2 ival   minval   maxval  is_set
+      pars(1)  = param_t('bmom',  1,1, 0d0,0d0, 0,    1d0, 1000d0, .false.)
+      pars(2)  = param_t('tmom',  1,1, 0d0,0d0, 0,    0d0,10000d0, .false.)
+      pars(3)  = param_t('lepton',2,1, 0d0,0d0, 0,    1d0,    2d0, .false.)
+      pars(4)  = param_t('ivec',  2,1, 0d0,0d0, 0,    1d0,    4d0, .false.)
+      pars(5)  = param_t('cutv',  1,1, 0d0,0d0, 0,  -10d0,   10d0, .false.)
+      pars(6)  = param_t('nev',   2,1, 0d0,0d0, 0,    1d0,   1d9,  .false.)
+      pars(7)  = param_t('iy',    2,1, 0d0,0d0, 0,    1d0, 2.15d9, .false.)
+      pars(8)  = param_t('Q2',    1,2, 0d0,0d0, 0,    0d0,  100d0, .false.)
+      pars(9)  = param_t('y',     1,2, 0d0,0d0, 0,    0d0,    1d0, .false.)
+      pars(10) = param_t('t',     1,2, 0d0,0d0, 0,    0d0,   10d0, .false.)
+      pars(11) = param_t('tslope',1,1, 0d0,0d0, 0,    0d0,  100d0, .false.)
+      pars(12) = param_t('iborn', 2,1, 0d0,0d0, 0,    0d0,    1d0, .false.)
+      pars(13) = param_t('W',     1,2, 0d0,0d0, 0,    0d0, 1000d0, .false.)
+      pars(14) = param_t('xB',          1,2, 0d0,  0d0, 0,    0d0,    1d0, .false.)
+!     Optional acceptance cuts (not required; defaults = no cut)
+      pars(15) = param_t('momentum_electron',1,2, 0d0,1d4,0, 0d0, 1d4, .false.)
+      pars(16) = param_t('theta_electron',   1,2, 0d0,180d0,0, 0d0, 180d0, .false.)
+      pars(17) = param_t('momentum_proton',  1,2, 0d0,1d4,0, 0d0, 1d4, .false.)
+      pars(18) = param_t('theta_proton',     1,2, 0d0,180d0,0, 0d0, 180d0, .false.)
+      pars(19) = param_t('momentum_hplus',   1,2, 0d0,1d4,0, 0d0, 1d4, .false.)
+      pars(20) = param_t('theta_hplus',      1,2, 0d0,180d0,0, 0d0, 180d0, .false.)
+      pars(21) = param_t('momentum_hminus',  1,2, 0d0,1d4,0, 0d0, 1d4, .false.)
+      pars(22) = param_t('theta_hminus',     1,2, 0d0,180d0,0, 0d0, 180d0, .false.)
+!     --- Cross-section model parameters (optional, have defaults) ---
+!     Defaults are the TUNED values (June 2026):
+!       phi  (ivec=3, exponential t):  alf2=-1.245 alf3=0.762 nuT=2.344
+!                                      bt=1.284  cR=1.0
+!       jpsi (ivec=4, dipole t):       alf2=4.122  alf3=0.32  nuT=3.0
+!                                      mg2=3.112 cR=0.4
+!     Table defaults below are the PHI values; for ivec=4 any parameter
+!     not set in the input file is replaced by the J/psi default in code.
+      pars(23) = param_t('alf1',  1,1, 400d0,0d0, 0,  0d0, 1d6,  .false.)
+      pars(24) = param_t('alf2',  1,1,-1.245d0,0d0,0, -50d0, 50d0, .false.)
+      pars(25) = param_t('alf3',  1,1, 0.762d0,0d0,0, -50d0, 50d0, .false.)
+      pars(26) = param_t('nuT',   1,1, 2.344d0,0d0,0,  0d0, 50d0, .false.)
+      pars(27) = param_t('bt',    1,1, 1.284d0,0d0,0,  0d0,100d0, .false.)
+      pars(28) = param_t('cR',    1,1, 1.000d0,0d0,0,  0d0, 50d0, .false.)
+!     --- J/psi only: dipole mass^2 (tuned 2026-06) ---
+      pars(29) = param_t('mg2',   1,1, 3.112d0,0d0,0, 0.1d0,100d0, .false.)
+
+!     Read, validate, print
+      call read_input(trim(input_file), pars, npars)
+      call validate(pars, 14)          ! only required parameters
+      call print_params(pars, npars)
+
+!     Extract values
+      bmom   = pars(1)%rval
+      tmom   = pars(2)%rval
+      lepton = pars(3)%ival
+      ivec   = pars(4)%ival
+      cutv   = pars(5)%rval
+      nev    = pars(6)%ival
+      iy     = pars(7)%ival
+      q2min  = pars(8)%rval;  q2max  = pars(8)%rval2
+      ymin   = pars(9)%rval;  ymax   = pars(9)%rval2
+      tmin   = pars(10)%rval; tmax   = pars(10)%rval2   ! |t| min max (positive)
+      tslope = pars(11)%rval
+      iborn  = pars(12)%ival
+      wmin   = pars(13)%rval
+      xbmin  = pars(14)%rval; xbmax  = pars(14)%rval2
+      wmin2  = wmin*wmin
+!     Optional cuts — if not set in input file, defaults mean no cut
+      if(pars(15)%is_set) then
+        pe_min = pars(15)%rval;  pe_max = pars(15)%rval2
+      else
+        pe_min = 0d0;            pe_max = 1d4
+      endif
+      if(pars(16)%is_set) then
+        the_min = pars(16)%rval; the_max = pars(16)%rval2
+      else
+        the_min = 0d0;           the_max = 180d0
+      endif
+      if(pars(17)%is_set) then
+        pp_min = pars(17)%rval;  pp_max = pars(17)%rval2
+      else
+        pp_min = 0d0;            pp_max = 1d4
+      endif
+      if(pars(18)%is_set) then
+        thp_min = pars(18)%rval; thp_max = pars(18)%rval2
+      else
+        thp_min = 0d0;           thp_max = 180d0
+      endif
+      if(pars(19)%is_set) then
+        php_min = pars(19)%rval;  php_max = pars(19)%rval2
+      else
+        php_min = 0d0;            php_max = 1d4
+      endif
+      if(pars(20)%is_set) then
+        thhp_min = pars(20)%rval; thhp_max = pars(20)%rval2
+      else
+        thhp_min = 0d0;           thhp_max = 180d0
+      endif
+      if(pars(21)%is_set) then
+        phm_min = pars(21)%rval;  phm_max = pars(21)%rval2
+      else
+        phm_min = 0d0;            phm_max = 1d4
+      endif
+      if(pars(22)%is_set) then
+        thhm_min = pars(22)%rval; thhm_max = pars(22)%rval2
+      else
+        thhm_min = 0d0;           thhm_max = 180d0
+      endif
+      if(pars(15)%is_set .or. pars(16)%is_set) then
+        write(*,'(a)') ' Electron acceptance cuts active:'
+        write(*,'(a,f8.3,a,f8.3,a)') '   |p|_e = [',pe_min,' ,',pe_max,' ] GeV/c'
+        write(*,'(a,f8.3,a,f8.3,a)') '   the_e = [',the_min,' ,',the_max,' ] deg'
+      endif
+      if(pars(17)%is_set .or. pars(18)%is_set) then
+        write(*,'(a)') ' Proton acceptance cuts active:'
+        write(*,'(a,f8.3,a,f8.3,a)') '   |p|_p = [',pp_min,' ,',pp_max,' ] GeV/c'
+        write(*,'(a,f8.3,a,f8.3,a)') '   the_p = [',thp_min,' ,',thp_max,' ] deg'
+      endif
+      if(pars(19)%is_set .or. pars(20)%is_set) then
+        write(*,'(a)') ' h+ acceptance cuts active:'
+        write(*,'(a,f8.3,a,f8.3,a)') '   |p|h+ = [',php_min,' ,',php_max,' ] GeV/c'
+        write(*,'(a,f8.3,a,f8.3,a)') '   th_h+ = [',thhp_min,' ,',thhp_max,' ] deg'
+      endif
+      if(pars(21)%is_set .or. pars(22)%is_set) then
+        write(*,'(a)') ' h- acceptance cuts active:'
+        write(*,'(a,f8.3,a,f8.3,a)') '   |p|h- = [',phm_min,' ,',phm_max,' ] GeV/c'
+        write(*,'(a,f8.3,a,f8.3,a)') '   th_h- = [',thhm_min,' ,',thhm_max,' ] deg'
+      endif
+
+!     --- phi model parameters (table defaults = tuned phi values) ---
+      phi_alf1 = pars(23)%rval
+      phi_alf2 = pars(24)%rval
+      phi_alf3 = pars(25)%rval
+      phi_nuT  = pars(26)%rval
+      phi_bt   = pars(27)%rval
+      phi_cR   = pars(28)%rval
+!     --- J/psi model parameters: input value if set, else tuned default ---
+      pj_alf1 = 400.d0
+      if(pars(23)%is_set) pj_alf1 = pars(23)%rval
+      pj_alf2 = 4.122d0
+      if(pars(24)%is_set) pj_alf2 = pars(24)%rval
+      pj_alf3 = 0.320d0
+      if(pars(25)%is_set) pj_alf3 = pars(25)%rval
+      pj_nuT  = 3.000d0
+      if(pars(26)%is_set) pj_nuT  = pars(26)%rval
+      pj_cR   = 0.400d0
+      if(pars(28)%is_set) pj_cR   = pars(28)%rval
+      pj_mg2  = pars(29)%rval
+      if(ivec.eq.4) then
+        write(*,'(a)')       ' J/psi model parameters (dipole t):'
+        write(*,'(a,f12.4)') '   alf1 = ', pj_alf1
+        write(*,'(a,f12.4)') '   alf2 = ', pj_alf2
+        write(*,'(a,f12.4)') '   alf3 = ', pj_alf3
+        write(*,'(a,f12.4)') '   nuT  = ', pj_nuT
+        write(*,'(a,f12.4)') '   mg2  = ', pj_mg2
+        write(*,'(a,f12.4)') '   cR   = ', pj_cR
+      else
+        write(*,'(a)')       ' Phi model parameters (exp t):'
+        write(*,'(a,f12.4)') '   alf1 = ', phi_alf1
+        write(*,'(a,f12.4)') '   alf2 = ', phi_alf2
+        write(*,'(a,f12.4)') '   alf3 = ', phi_alf3
+        write(*,'(a,f12.4)') '   nuT  = ', phi_nuT
+        write(*,'(a,f12.4)') '   bt   = ', phi_bt
+        write(*,'(a,f12.4)') '   cR   = ', phi_cR
+      endif
 
       call setcon(ivec,lepton)
       s = 2d0*(sqrt(tmom**2+amp**2)*sqrt(bmom**2+aml2)+bmom*tmom)
@@ -116,7 +392,7 @@
       open(unit=11, file=trim(stat_file))
       open(unit=12, file=trim(vdist_file))
 
-      ngen=0; nsoft=0; nhard=0; nisr=0; nfsr=0; ntry=0
+      ngen=0; nphys=0; nsoft=0; nhard=0; nisr=0; nfsr=0; ntry=0
       nf_born=0; nf_thresh=0; nf_tkin=0; nf_vmax=0
       nf_sib=0; nf_sshxxh=0; nf_sxqv=0; nf_sigtot=0
       wsum=0d0; wsum2=0d0   ! for cross section integration
@@ -241,17 +517,33 @@
 
 !       Exact hard cross section via qqt (integrates podinl)
 !       Only needed for RC run; skip for Born-only to avoid slow integration
+!
+!       sig_hard_fix scheme:
+!        - sig_total (the RATE) keeps the validated Bardin-Shumeiko form
+!          sig_soft + sig_F with the SIGNED finite remainder sig_F
+!          (no clamp -> removes the O(0.1%) clamp bias).
+!        - The hard-event SAMPLING cross section is the physical
+!          sigma_hard(v>vcut) = sig_F + sib*(alpha/pi)(dlm-1)ln(vmax^2/vcut^2)
+!          (the analytic soft-kernel integral over [vcut,vmax] added back).
+!          Positive by construction up to O(alpha^2); clamped as numerical
+!          safety. vcut_ir = 1d-2 GeV^2 (omega ~ 5 MeV) chosen at the
+!          detector-insensitivity scale; must match vcut_use below.
         if(iborn.eq.0) then
           phidif = phirad
           call difflt(q2,w2,tdif,sigmal0,sigmat0)
           call qqt(sig_hard_exact)
-!         Scale to Diehl convention: sig_hard_Diehl = rconv * sig_hard_Akushevich
-          sig_hard = rconv * max(0d0, sig_hard_exact)
+!         Scale to Diehl convention: rconv * Akushevich
+          sig_F = rconv * sig_hard_exact
+          vcut_ir = 1d-2
+          ana_soft = sib*alpha/pi*(dlm-1d0)*log(vmax**2/vcut_ir**2)
+          sig_hard = max(0d0, sig_F + ana_soft)
+          sig_total = sig_soft + sig_F
         else
           sig_hard = 0d0
+          sig_total = sig_soft
         endif
-        sig_total = sig_soft + sig_hard
         if(sig_total.le.0d0)then; nf_sigtot=nf_sigtot+1; goto 100; endif
+        sig_hard = min(sig_hard, sig_total)
 
         sg_born_full = sg_born * sib
         if(sg_born_full.le.0d0)then
@@ -270,9 +562,22 @@
         endif
         if(r_ar .gt. ar_weight/wmax) goto 100
 
-        ngen = ngen + 1
-        wsum  = wsum  + ar_weight
-        wsum2 = wsum2 + ar_weight**2
+!       ── Scattered electron acceptance cuts ────────────────────────
+!       |p|_e' and theta from exact kinematics
+        Eprime_cut = ebeam*(1d0-ys)
+        ap1_cut = sqrt(max(0d0, ebeam**2  - aml2))
+        ap2_cut = sqrt(max(0d0, Eprime_cut**2 - aml2))
+        if(ap2_cut.lt.pe_min .or. ap2_cut.gt.pe_max) goto 100
+        if(ap1_cut.gt.0d0 .and. ap2_cut.gt.0d0) then
+          costhe_cut = (2d0*ebeam*Eprime_cut - 2d0*aml2 - q2) &
+                       / (2d0*ap1_cut*ap2_cut)
+          costhe_cut = min(1d0, max(-1d0, costhe_cut))
+          the_cut_deg = acos(costhe_cut) * 180d0 / pi
+          if(the_cut_deg.lt.the_min .or. the_cut_deg.gt.the_max) goto 100
+        endif
+!       ──────────────────────────────────────────────────────────────
+
+        nphys = nphys + 1
 
 !       Step 4: Born only or full RC?
         if(iborn.eq.1)then
@@ -280,6 +585,18 @@
           nsoft = nsoft + 1
           call build_4vectors(ebeam,xs,ys,tdif,phirad,k1,ptar,k2,ph,pp)
           call rotz_event(k2,ph,pp,kgam,pi,dble(urand(iy)))
+          call decay_rho(ph,pip,pim,iy,ivec)
+          call check_acceptance(pp,pip,pim, &
+               pp_min,pp_max,thp_min,thp_max, &
+               php_min,php_max,thhp_min,thhp_max, &
+               phm_min,phm_max,thhm_min,thhm_max, &
+               pars(17)%is_set,pars(18)%is_set, &
+               pars(19)%is_set,pars(20)%is_set, &
+               pars(21)%is_set,pars(22)%is_set, ipass)
+          if(ipass.eq.0) goto 100
+          ngen = ngen + 1
+          wsum  = wsum  + ar_weight
+          wsum2 = wsum2 + ar_weight**2
           call write_lund(10,ngen,k1,ptar,k2,ph,pp,kgam, &
                           .false.,ivec,iy,pip,pim,ebeam,ar_weight)
           goto 100
@@ -294,6 +611,18 @@
           nsoft = nsoft + 1
           call build_4vectors(ebeam,xs,ys,tdif,phirad,k1,ptar,k2,ph,pp)
           call rotz_event(k2,ph,pp,kgam,pi,dble(urand(iy)))
+          call decay_rho(ph,pip,pim,iy,ivec)
+          call check_acceptance(pp,pip,pim, &
+               pp_min,pp_max,thp_min,thp_max, &
+               php_min,php_max,thhp_min,thhp_max, &
+               phm_min,phm_max,thhm_min,thhm_max, &
+               pars(17)%is_set,pars(18)%is_set, &
+               pars(19)%is_set,pars(20)%is_set, &
+               pars(21)%is_set,pars(22)%is_set, ipass)
+          if(ipass.eq.0) goto 100
+          ngen = ngen + 1
+          wsum  = wsum  + ar_weight
+          wsum2 = wsum2 + ar_weight**2
           call write_lund(10,ngen,k1,ptar,k2,ph,pp,kgam, &
                           .false.,ivec,iy,pip,pim,ebeam,ar_weight)
 
@@ -301,15 +630,18 @@
 !         HARD RADIATED EVENT
           nhard = nhard + 1
 
-!         Sample v by accept/reject weighted by podinl (Bug #2 fix)
-          vcut_use = 1d-4
+!         Sample v from the collinear soft kernel (1/v) weighted by
+!         the Born suppression at shifted W'^2 = W^2 - v (sig_hard_fix:
+!         replaces podinl-based sampling; podinl is the IR-subtracted
+!         remainder, not a sampling density). vcut_use = vcut_ir.
+          vcut_use = 1d-2
           rvlogmin = log(vcut_use)
           rvlogmax = log(vmax)
           if(rvlogmax.le.rvlogmin)then
             nf_born=nf_born+1
             goto 100
           endif
-          call sample_vrad(vcut_use,vmax,tamin,tamax,phidif,iy,vrad, &
+          call sample_v_soft(vcut_use,vmax,q2,w2,tdif,iy,vrad, &
                            iok_vrad)
           if(iok_vrad.eq.0)then
             nf_born=nf_born+1
@@ -370,6 +702,18 @@
           endif
 
           call rotz_event(k2,ph,pp,kgam,pi,dble(urand(iy)))
+          call decay_rho(ph,pip,pim,iy,ivec)
+          call check_acceptance(pp,pip,pim, &
+               pp_min,pp_max,thp_min,thp_max, &
+               php_min,php_max,thhp_min,thhp_max, &
+               phm_min,phm_max,thhm_min,thhm_max, &
+               pars(17)%is_set,pars(18)%is_set, &
+               pars(19)%is_set,pars(20)%is_set, &
+               pars(21)%is_set,pars(22)%is_set, ipass)
+          if(ipass.eq.0) goto 100
+          ngen = ngen + 1
+          wsum  = wsum  + ar_weight
+          wsum2 = wsum2 + ar_weight**2
           call write_lund(10,ngen,k1,ptar,k2,ph,pp,kgam, &
                           .true.,ivec,iy,pip,pim,ebeam,ar_weight)
         endif
@@ -392,15 +736,16 @@
       write(*,'(a)') '=================================='
       write(*,'(a)') '====== Generator Statistics ======'
       anorm = 1d0/max(1_8,ntry)
-!     With accept/reject: sigma = wmax * efficiency
-      axsec = wmax * dble(ngen)/max(1_8,ntry)
-      axsec_err = axsec/sqrt(dble(max(1,ngen)))
+!     With accept/reject: sigma = wmax * efficiency (using nphys, not ngen)
+      axsec = wmax * dble(nphys)/max(1_8,ntry)
+      axsec_err = axsec/sqrt(dble(max(1,nphys)))
       write(*,'(a)') '====== Cross Section ======'
       write(*,'(a,g12.4,a)') ' sigma_Born   = ',axsec,' nb'
       write(*,'(a,g12.4,a)') ' stat error   = ',axsec_err,' nb'
-      write(*,'(a,g12.4)')   ' efficiency   = ',dble(ngen)/max(1_8,ntry)
+      write(*,'(a,g12.4)')   ' efficiency   = ',dble(nphys)/max(1_8,ntry)
       write(*,'(a)') '=================================='
-      write(*,'(a,i8)') ' Events generated : ',ngen
+      write(*,'(a,i8)') ' Events written   : ',ngen
+      write(*,'(a,i8)') ' Events physics   : ',nphys
       write(*,'(a,i12)') ' Total attempts   : ',ntry
       write(*,'(a,i8)') ' Non-radiated     : ',nsoft
       write(*,'(a,i8)') ' Hard radiated    : ',nhard
@@ -411,9 +756,10 @@
       write(*,'(a)') '=================================='
 
       write(11,'(a,i8)') 'ngen      = ',ngen
+      write(11,'(a,i8)') 'nphys     = ',nphys
       write(11,'(a,i8)') 'nsoft     = ',nsoft
       write(11,'(a,i8)') 'nhard     = ',nhard
-      write(11,'(a,f8.4)') 'hard_frac = ',dble(nhard)/max(1,ngen)
+      write(11,'(a,f8.4)') 'hard_frac = ',dble(nhard)/max(1,nphys)
       write(11,'(a,g12.4)') 'sigma_nb  = ',axsec
       write(11,'(a,g12.4)') 'sigma_err = ',axsec_err
 
@@ -432,7 +778,8 @@
       common/sxy/s,x,sx,sxp,q2,w2,aly,anu,sqly,an,tamin,tamax,xs,ys
       common/phi/phirad,tdif,phidif,tq,vmax,ivec
       common/tpar/tslope
-      common/cuts/wmin2
+      common/cuts/wmin2,ymin,ymax
+      common/jpsimodel/pj_alf1,pj_alf2,pj_alf3,pj_nuT,pj_mg2,pj_cR
       integer*4 iy
 
       iacc = 0
@@ -441,6 +788,7 @@
 !     This prevents the LCG from falling into a periodic orbit where
 !     early-return events (ys>1, W cuts) consume fewer RNs than full
 !     events, causing the generator to lock onto a single kinematic point.
+
       rq2min = log(q2min)
       rq2max = log(q2max)
       r1 = dble(urand(iy))
@@ -451,14 +799,27 @@
       q2 = exp(rq2min + r1*(rq2max-rq2min))
       wjacq2 = q2*(rq2max-rq2min)
 
-!     sample xB uniformly; bornin returns dsigma/(dxB dQ2 dt) so no Jacobian
-      xs = xbmin + r2*(xbmax-xbmin)
-      wjacxb = (xbmax-xbmin)
+!      r1 = dble(urand(iy))
+!      r2 = dble(urand(iy))
+!      r3 = dble(urand(iy))
+!      r4 = dble(urand(iy))
+
+!      q2 = q2min + r1*(q2max-q2min)
+!      wjacq2 = (q2max-q2min)
+      
+!     sample xB with log-sampling: tames the 1/xB flux factor,
+!     critical for J/psi where xB spans 3+ decades
+      rxbmin = log(xbmin)
+      rxbmax = log(xbmax)
+      xs = exp(rxbmin + r2*(rxbmax-rxbmin))
+      wjacxb = xs*(rxbmax-rxbmin)
       if(xs.ge.1d0.or.xs.le.0d0) return
 
 !     derive y from xB and Q2
       ys = q2/(s*xs)
       if(ys.ge.1d0.or.ys.le.0d0) return
+!     user analysis cut: ymin <= y <= ymax
+      if(ys.lt.ymin .or. ys.gt.ymax) return
 
 !     W cuts: W^2 = M_p^2 + s*y - Q^2
       w2loc = amp2 + s*ys - q2
@@ -468,17 +829,35 @@
 !     (2) user analysis cut: W > wmin
       if(w2loc.lt.wmin2) return
 
-      abslope = tslope
+!     ── t sampling: shape depends on the meson ──
+!     ivec=1,2,3 rho/omega/phi : exponential proposal exp(tslope*t)
+!     ivec=4 jpsi              : dipole proposal 1/(amg2-t)^4
+!     tslope MUST match bt in sigma_T_phi for phi.
       tdmin_u = -tmax
       tdmax_u = -tmin
-      abt1 = exp(abslope*tdmin_u)
-      abt2 = exp(abslope*tdmax_u)
-      abst = abt2 - abt1
-      if(abst.le.0d0) return
-      ranexp = abt1 + r3*abst
-      if(ranexp.le.0d0) return
-      tdif  = log(ranexp)/abslope
-      wjact = abst/abslope/exp(abslope*tdif)
+      if(ivec.le.3) then
+!       Rho/omega/phi: exponential exp(tslope*t)
+        abslope = tslope
+        abt1 = exp(abslope*tdmin_u)
+        abt2 = exp(abslope*tdmax_u)
+        abst = abt2 - abt1
+        if(abst.le.0d0) return
+        ranexp = abt1 + r3*abst
+        if(ranexp.le.0d0) return
+        tdif  = log(ranexp)/abslope
+        wjact = abst/abslope/exp(abslope*tdif)
+      else
+!       Jpsi: dipole 1/(amg2-t)^4 — matches sigma_T_jpsi
+        amg2 = pj_mg2      ! mg2 from input file (common /jpsimodel/)
+        absA = (amg2 - tdmin_u)**(-3)    ! at t=-tmax (smaller)
+        absB = (amg2 - tdmax_u)**(-3)    ! at t=-tmin (larger)
+        abst = absB - absA
+        if(abst.le.0d0) return
+        ranexp = absA + r3*abst
+        if(ranexp.le.0d0) return
+        tdif  = amg2 - ranexp**(-1d0/3d0)
+        wjact = abst * (amg2 - tdif)**4 / 3d0
+      endif
 
       phirad = 2d0*pi*r4
 
@@ -701,6 +1080,93 @@
 
 
 !==============================================================
+!     check_acceptance -- proton and decay daughter |p|/theta cuts
+!     4-vectors: p(1)=E, p(2)=px, p(3)=py, p(4)=pz
+!     pip = h+ daughter, pim = h- daughter
+!     ipass=1 if all active cuts pass, ipass=0 otherwise
+!==============================================================
+      subroutine check_acceptance(pp,pip,pim, &
+           pp_min,pp_max,thp_min,thp_max, &
+           php_min,php_max,thhp_min,thhp_max, &
+           phm_min,phm_max,thhm_min,thhm_max, &
+           has_pp,has_thp, &
+           has_php,has_thhp,has_phm,has_thhm, ipass)
+      implicit real*8(a-h,o-z)
+      real*8 pp(4),pip(4),pim(4)
+      logical has_pp,has_thp,has_php,has_thhp,has_phm,has_thhm
+      real*8 amag,atheta,deg
+      parameter(deg=57.29577951308232d0)
+
+      ipass = 1
+
+!     Proton |p| cut
+      if(has_pp) then
+        amag = sqrt(pp(2)**2+pp(3)**2+pp(4)**2)
+        if(amag.lt.pp_min .or. amag.gt.pp_max) then
+          ipass = 0; return
+        endif
+      endif
+
+!     Proton theta cut
+      if(has_thp) then
+        amag = sqrt(pp(2)**2+pp(3)**2+pp(4)**2)
+        if(amag.gt.0d0) then
+          atheta = acos(min(1d0,max(-1d0,pp(4)/amag)))*deg
+        else
+          atheta = 0d0
+        endif
+        if(atheta.lt.thp_min .or. atheta.gt.thp_max) then
+          ipass = 0; return
+        endif
+      endif
+
+!     h+ |p| cut
+      if(has_php) then
+        amag = sqrt(pip(2)**2+pip(3)**2+pip(4)**2)
+        if(amag.lt.php_min .or. amag.gt.php_max) then
+          ipass = 0; return
+        endif
+      endif
+
+!     h+ theta cut
+      if(has_thhp) then
+        amag = sqrt(pip(2)**2+pip(3)**2+pip(4)**2)
+        if(amag.gt.0d0) then
+          atheta = acos(min(1d0,max(-1d0,pip(4)/amag)))*deg
+        else
+          atheta = 0d0
+        endif
+        if(atheta.lt.thhp_min .or. atheta.gt.thhp_max) then
+          ipass = 0; return
+        endif
+      endif
+
+!     h- |p| cut
+      if(has_phm) then
+        amag = sqrt(pim(2)**2+pim(3)**2+pim(4)**2)
+        if(amag.lt.phm_min .or. amag.gt.phm_max) then
+          ipass = 0; return
+        endif
+      endif
+
+!     h- theta cut
+      if(has_thhm) then
+        amag = sqrt(pim(2)**2+pim(3)**2+pim(4)**2)
+        if(amag.gt.0d0) then
+          atheta = acos(min(1d0,max(-1d0,pim(4)/amag)))*deg
+        else
+          atheta = 0d0
+        endif
+        if(atheta.lt.thhm_min .or. atheta.gt.thhm_max) then
+          ipass = 0; return
+        endif
+      endif
+
+      return
+      end
+
+
+!==============================================================
 !     rotz_event  --  Random rotation around beam (z) axis
 !     Rotates k2, ph, pp, kgam by uniform random angle in [0,2pi]
 !     k1 (beam along z) is invariant under this rotation
@@ -746,8 +1212,6 @@
       logical has_photon
       integer*4 iy
       integer pidp, pidm, pidmeson
-
-      call decay_rho(ph,pip,pim,iy,ivec)
 
 !     npart: beam e-, scattered e-, recoil p, meson, h+, h-, [photon]
       npart = 6
@@ -858,7 +1322,7 @@
       real*4 urand
       integer*4 iy, ivec
 !     TEMPORARY: delta function (fixed mass, no BW smearing)
-      amv = amv0; return
+!      amv = amv0; return      ! uncomment if you want delta function
 !     Sample M from Breit-Wigner with running width (rho only)
 !     For rho (ivec=1): Gamma(M) = Gamma0*(p(M)/p(M0))^3*(M0/M)
 !     For others: constant width
@@ -881,6 +1345,25 @@
       p0 = sqrt(max(0d0, amv0**2/4d0 - ampi**2))
       thmin = atan((ammin**2-amv0**2)/(amv0*gamv))
       thmax = atan((ammax**2-amv0**2)/(amv0*gamv))
+!     Find the maximum of the accept/reject ratio over the sampling range.
+!     The constant-width BW is not always above the running-width BW near M0,
+!     so we must normalise the ratio by its maximum to get a valid envelope.
+      ratio_max = 1d0
+      if(ivec.eq.1 .and. p0.gt.0d0) then
+        nscan = 500
+        do iscan = 0, nscan
+          th_s   = thmin + iscan*(thmax-thmin)/dble(nscan)
+          amv2_s = amv0**2 + amv0*gamv*tan(th_s)
+          amv_s  = sqrt(max(ammin**2, amv2_s))
+          pm_s   = sqrt(max(0d0, amv_s**2/4d0 - ampi**2))
+          gr_s   = gamv*(pm_s/p0)**3*(amv0/amv_s)
+          bwr_s  = 1d0/((amv2_s-amv0**2)**2 + amv0**2*gr_s**2)
+          bwc_s  = 1d0/((amv2_s-amv0**2)**2 + amv0**2*gamv**2)
+          r_s    = bwr_s/bwc_s*(gr_s/gamv)*(amv_s/amv0)
+          if(r_s .gt. ratio_max) ratio_max = r_s
+        enddo
+        ratio_max = ratio_max * 1.01d0
+      endif
       ibw_try = 0
   10  continue
       ibw_try = ibw_try + 1
@@ -900,10 +1383,10 @@
         else
           gamrun = gamv
         endif
-!       Accept/reject: w(M) = BW(M,Gamma_run) / BW(M,Gamma0)
+!       Accept/reject: ratio normalised by ratio_max ensures valid envelope
         bw_run  = 1d0/((amv2-amv0**2)**2 + amv0**2*gamrun**2)
         bw_const= 1d0/((amv2-amv0**2)**2 + amv0**2*gamv**2)
-        ratio   = bw_run / bw_const * (gamrun/gamv)**2
+        ratio   = bw_run/bw_const*(gamrun/gamv)*(amv/amv0)/ratio_max
         if(dble(urand(iy)).gt.ratio) goto 10
       endif
       end
@@ -916,7 +1399,7 @@
       common/cmp/pi,alpha,amp,amp2,ap,ap2,aml2,amc2,amv,barn
       common/bwpar/amv0,gamv
       dimension amhad(4),gamhad(4)
-      data amhad /0.7683d0,   0.78195d0,  1.019412d0, 3.0969d0  /
+      data amhad /0.77526d0,  0.78195d0,  1.019412d0, 3.0969d0  /
       data gamhad/0.1502d0,   0.00849d0,  0.004266d0, 0.0000929d0/
       if(lepton.eq.1)aml2=.261112d-6
       if(lepton.eq.2)aml2=.111637d-1
@@ -942,7 +1425,6 @@
       common/pri/ipri
       ipri=0
       call difflt(q2,w2,tdif,sigmal,sigmat)
-      sigmal = 0d0   ! sigma_T only — for comparison with Harut sigma_T
       gamma2  = 4d0*amp2*xs**2/q2
       eps_num = 1d0 - ys - 0.25d0*ys**2*gamma2
       eps_den = 1d0 - ys + 0.5d0*ys**2 + 0.25d0*ys**2*gamma2
@@ -966,14 +1448,20 @@
 
       subroutine difflt(q2,w2,t,sigl,sigt)
 !
-!     gagrho parameterization:
-!       sigma_T ~ exp(b_T * t) * xB / (1 - xB) / Q^2   b_T = 2.75 GeV^-2
-!       sigma_L ~ exp(b_L * t) * xB                     b_L = 4.25 GeV^-2
-!     where xB = Q2 / (W2 + Q2 - Mp2)
-!     Note: both coefficients are 30 (not 20); 1/Q^2 factor is in sigma_T
+!     Wrapper: converts W2 -> xB, guards thresholds, then dispatches to
+!     the particle-specific cross-section functions:
+!       ivec=1  rho    -> sigma_T_rho  / sigma_L_rho
+!       ivec=2  omega  -> sigma_T_rho  / sigma_L_rho  (same as rho for now)
+!       ivec=3  phi    -> sigma_T_phi  / sigma_L_phi
+!       ivec=4  jpsi   -> sigma_T_jpsi / sigma_L_jpsi
+!     To change a model, edit only the corresponding pair of functions below.
 !
       implicit real*8(a-h,o-z)
       common/cmp/pi,alpha,amp,amp2,ap,ap2,aml2,amc2,amv,barn
+      common/phi/phirad,tdif,phidif,tq,vmax,ivec
+      real*8 sigma_T_rho,  sigma_L_rho
+      real*8 sigma_T_phi,  sigma_L_phi
+      real*8 sigma_T_jpsi, sigma_L_jpsi
 
 !     threshold check
       if(w2.lt.(amp+amv)**2)then; sigl=0d0; sigt=0d0; return; endif
@@ -982,15 +1470,199 @@
       axb = q2/(w2+q2-amp2)
       if(axb.le.0d0.or.axb.ge.1d0)then; sigl=0d0; sigt=0d0; return; endif
 
-!     t-slopes from gagrho
-      bt = 2.75d0
-      bl = 4.25d0
+!     dispatch by particle type
+      if(ivec.eq.4) then
+        sigt = sigma_T_jpsi(q2, axb, t)
+        sigl = sigma_L_jpsi(q2, axb, t)
+      elseif(ivec.eq.3) then
+        sigt = sigma_T_phi(q2, axb, t)
+        sigl = sigma_L_phi(q2, axb, t)
+      else                       ! ivec=1 (rho) and ivec=2 (omega)
+        sigt = sigma_T_rho(q2, axb, t)
+        sigl = sigma_L_rho(q2, axb, t)
+      endif
+      end
 
-!     hadronic cross sections (gagrho: sigma_T has 1/Q^2 factor)
-!       sigma_T = 30 * exp(b_T*t) * xB/(1-xB) / Q^2
-!       sigma_L = 30 * exp(b_L*t) * xB
-      sigt = 30.d0 * exp(bt*t) * axb/(1.d0-axb) / q2
-      sigl = 30.d0 * exp(bl*t) * axb
+!======================================================================
+!  Particle-specific cross-section functions.
+!  Interface: f(q2, xB, t) — all in GeV units.
+!  All physics parameters live inside each function.
+!  Edit the appropriate pair when fitting to experimental data.
+!======================================================================
+
+!----------------------------------------------------------------------
+      real*8 function sigma_T_rho(q2,xB,t)
+!
+!     Transverse rho0 electroproduction cross section.
+!     Model: sigma_T = AT * exp(bT*t) * xB/(1-xB) / Q2^3
+!
+      implicit real*8(a-h,o-z)
+!     --- tunable parameters ---
+      parameter( AT = 15.d0  )   ! overall normalization
+      parameter( bT =  2.00d0 )  ! t-slope (GeV^-2)
+!     --------------------------
+      if(xB.le.0d0 .or. xB.ge.1d0 .or. q2.le.0d0)then
+        sigma_T_rho = 0d0; return
+      endif
+      sigma_T_rho = AT * exp(bT*t) * xB / (1d0-xB) / q2**3
+      end
+
+!----------------------------------------------------------------------
+      real*8 function sigma_L_rho(q2,xB,t)
+!
+!     Longitudinal rho0 electroproduction cross section.
+!     Model: sigma_L = AL * exp(bL*t) * xB / Q2^2
+!
+      implicit real*8(a-h,o-z)
+!     --- tunable parameters ---
+      parameter( AL = 25.d0  )   ! overall normalization
+      parameter( bL =  4.00d0 )  ! t-slope (GeV^-2)
+!     --------------------------
+      if(xB.le.0d0 .or. xB.ge.1d0 .or. q2.le.0d0)then
+        sigma_L_rho = 0d0; return
+      endif
+      sigma_L_rho = AL * exp(bL*t) * xB / q2**2
+      end
+
+!----------------------------------------------------------------------
+      real*8 function sigma_T_phi(q2,xB,t)
+!
+!     Transverse phi electroproduction cross section  dσ_T/dt  [nb/GeV²]
+!     Parameters read from input file via common /phimodel/
+!
+!       σ_T(W,Q²) = c_T(W) · (m²_φ/(m²_φ+Q²))^ν_T          [nb]
+!       c_T(W)    = α₁ · (1 − W²_th/W²)^α₂ · W^α₃          [nb]
+!
+!       dσ_T/dt   = σ_T · bt · exp(bt · t)                     [nb/GeV²]
+!       (t < 0, so bt*t < 0 → exponential fall-off)
+!
+      implicit real*8(a-h,o-z)
+      common/phimodel/phi_alf1,phi_alf2,phi_alf3,phi_nuT,phi_bt,phi_cR
+!     --- phi mass and threshold ---
+      parameter( amph  = 1.019412d0     )  ! m_φ   [GeV]
+      parameter( amph2 = amph**2        )  ! m²_φ  [GeV²]
+      parameter( amp_  = 0.938272d0     )  ! M_N   [GeV]
+      parameter( amp2  = amp_**2        )  ! M²_N  [GeV²]
+      parameter( Wth   = 1.96d0         )  ! W_th  [GeV]
+      parameter( Wth2  = Wth**2         )  ! W²_th [GeV²]
+!     -----------------------------
+      if(xB.le.0d0 .or. xB.ge.1d0 .or. q2.le.0d0)then
+        sigma_T_phi = 0d0; return
+      endif
+!     W² from Q² and xB
+      w2 = amp2 + q2*(1d0-xB)/xB
+      if(w2.le.Wth2)then; sigma_T_phi = 0d0; return; endif
+      w  = sqrt(w2)
+!     c_T(W) [nb]
+      cT = phi_alf1 * (1d0 - Wth2/w2)**phi_alf2 * w**phi_alf3
+!     σ_T(W,Q²) [nb]
+      sigT = cT / (1d0 + q2/amph2)**phi_nuT
+!     dσ_T/dt with exponential t-dependence [nb/GeV²]
+      sigma_T_phi = sigT * phi_bt * exp(phi_bt * t)
+      end
+
+!----------------------------------------------------------------------
+      real*8 function sigma_L_phi(q2,xB,t)
+!
+!     Longitudinal phi electroproduction cross section  dσ_L/dt  [nb/GeV²]
+!     σ_L/σ_T = c_R · Q²/m²_φ,  exponential t-dependence
+!     Parameters read from input file via common /phimodel/
+!
+      implicit real*8(a-h,o-z)
+      common/phimodel/phi_alf1,phi_alf2,phi_alf3,phi_nuT,phi_bt,phi_cR
+      parameter( amph  = 1.019412d0     )
+      parameter( amph2 = amph**2        )
+      parameter( amp_  = 0.938272d0     )
+      parameter( amp2  = amp_**2        )
+      parameter( Wth   = 1.96d0         )
+      parameter( Wth2  = Wth**2         )
+!     -----------------------------
+      if(xB.le.0d0 .or. xB.ge.1d0 .or. q2.le.0d0)then
+        sigma_L_phi = 0d0; return
+      endif
+      w2 = amp2 + q2*(1d0-xB)/xB
+      if(w2.le.Wth2)then; sigma_L_phi = 0d0; return; endif
+      w  = sqrt(w2)
+      cT   = phi_alf1 * (1d0 - Wth2/w2)**phi_alf2 * w**phi_alf3
+      sigT = cT / (1d0 + q2/amph2)**phi_nuT
+      dsdt = sigT * phi_bt * exp(phi_bt * t)
+      sigma_L_phi = phi_cR * (q2/amph2) * dsdt
+      end
+
+!----------------------------------------------------------------------
+      real*8 function sigma_T_jpsi(q2,xB,t)
+!
+!     Transverse J/psi electroproduction cross section  dσ_T/dt  [nb/GeV²]
+!     Same parametrisation as phi with m_φ → m_J/psi.
+!     Matched to Bhawani/lAger formulas.
+!
+      implicit real*8(a-h,o-z)
+      common/jpsimodel/pj_alf1,pj_alf2,pj_alf3,pj_nuT,pj_mg2,pj_cR
+!     --- J/psi mass and threshold ---
+      parameter( amjp  = 3.0969d0       )  ! m_J/psi [GeV]
+      parameter( amjp2 = amjp**2        )  ! m²_J/psi [GeV²]
+      parameter( amp_  = 0.938272d0     )  ! M_N [GeV]
+      parameter( amp2  = amp_**2        )  ! M²_N
+      parameter( Wth2  = (amp_+amjp)**2 )  ! (M_N+m_J/psi)²
+!     parameters from input file via common /jpsimodel/
+!     -----------------------------
+      if(xB.le.0d0 .or. xB.ge.1d0 .or. q2.le.0d0)then
+        sigma_T_jpsi = 0d0; return
+      endif
+      w2 = amp2 + q2*(1d0-xB)/xB
+      if(w2.le.Wth2)then; sigma_T_jpsi = 0d0; return; endif
+      w  = sqrt(w2)
+!     kinematic |t|_min (positive); t argument is negative
+      ecm_i  = (w2 + q2 + amp2)/(2d0*w)
+      pcm_i  = sqrt(max(0d0, ecm_i**2 - amp2))
+      ecm_f  = (w2 + amjp2 - amp2)/(2d0*w)
+      pcm_f  = sqrt(max(0d0, ecm_f**2 - amjp2))
+      tmin_k = (pcm_i - pcm_f)**2 - ( (q2 + amjp2)/(2d0*w) )**2
+      tmax_k = (pcm_i + pcm_f)**2 - ( (q2 + amjp2)/(2d0*w) )**2
+      if(-t.lt.tmin_k .or. -t.gt.tmax_k)then
+        sigma_T_jpsi = 0d0; return
+      endif
+      cT   = pj_alf1 * (1d0 - Wth2/w2)**pj_alf2 * w**pj_alf3
+      sigT = cT / (1d0 + q2/amjp2)**pj_nuT
+      sigma_T_jpsi = sigT * 3d0*(pj_mg2 + tmin_k)**3 / (pj_mg2 - t)**4
+      end
+
+!----------------------------------------------------------------------
+      real*8 function sigma_L_jpsi(q2,xB,t)
+!
+!     Longitudinal J/psi electroproduction cross section  dσ_L/dt  [nb/GeV²]
+!     Matched to Bhawani/lAger:  σ_L/σ_T = c_R · Q²/m²_J/psi
+!
+      implicit real*8(a-h,o-z)
+      common/jpsimodel/pj_alf1,pj_alf2,pj_alf3,pj_nuT,pj_mg2,pj_cR
+      parameter( amjp  = 3.0969d0       )
+      parameter( amjp2 = amjp**2        )
+      parameter( amp_  = 0.938272d0     )
+      parameter( amp2  = amp_**2        )
+      parameter( Wth2  = (amp_+amjp)**2 )
+!     parameters from input file via common /jpsimodel/
+!     (same sigma_T as sigma_T_jpsi, times cR*Q2/m2jp)
+!     -----------------------------
+      if(xB.le.0d0 .or. xB.ge.1d0 .or. q2.le.0d0)then
+        sigma_L_jpsi = 0d0; return
+      endif
+      w2 = amp2 + q2*(1d0-xB)/xB
+      if(w2.le.Wth2)then; sigma_L_jpsi = 0d0; return; endif
+      w  = sqrt(w2)
+!     kinematic |t|_min (positive); t argument is negative
+      ecm_i  = (w2 + q2 + amp2)/(2d0*w)
+      pcm_i  = sqrt(max(0d0, ecm_i**2 - amp2))
+      ecm_f  = (w2 + amjp2 - amp2)/(2d0*w)
+      pcm_f  = sqrt(max(0d0, ecm_f**2 - amjp2))
+      tmin_k = (pcm_i - pcm_f)**2 - ( (q2 + amjp2)/(2d0*w) )**2
+      tmax_k = (pcm_i + pcm_f)**2 - ( (q2 + amjp2)/(2d0*w) )**2
+      if(-t.lt.tmin_k .or. -t.gt.tmax_k)then
+        sigma_L_jpsi = 0d0; return
+      endif
+      cT   = pj_alf1 * (1d0 - Wth2/w2)**pj_alf2 * w**pj_alf3
+      sigT = cT / (1d0 + q2/amjp2)**pj_nuT
+      dsdt = sigT * 3d0*(pj_mg2 + tmin_k)**3 / (pj_mg2 - t)**4
+      sigma_L_jpsi = pj_cR * (q2/amjp2) * dsdt
       end
 
       double precision function vacpol(t)
@@ -1170,6 +1842,35 @@
         enddo
       enddo
       podinl=podinl/factor
+      end
+
+!--------------------------------------------------------------
+!  sample_v_soft (sig_hard_fix): sample v from the collinear soft
+!  kernel dN/dv ~ (1/v) * R(v), R(v) = sigma(W^2-v)/sigma(W^2) the
+!  Born threshold suppression at the radiatively shifted W'.
+!  Log-uniform proposal in [vmin,vmax]; accept with prob R(v)<=Rmax.
+!--------------------------------------------------------------
+      subroutine sample_v_soft(vmin_in,vmax_in,q2_in,w2_in,t_in, &
+                               iy,vrad_out,iok)
+      implicit real*8(a-h,o-z)
+      real*4 urand
+      integer*4 iy
+      call difflt(q2_in,w2_in,t_in,sl0,st0)
+      den = st0 + sl0
+      if(den.le.0d0)then; iok=0; return; endif
+      rvlogmin = log(vmin_in)
+      rvlogmax = log(vmax_in)
+      do itry=1,1000
+        vv = exp(rvlogmin + (rvlogmax-rvlogmin)*dble(urand(iy)))
+        call difflt(q2_in,w2_in-vv,t_in,sl,st)
+        ratio = (st+sl)/den
+        if(dble(urand(iy)).lt.ratio)then
+          vrad_out = vv
+          iok = 1
+          return
+        endif
+      enddo
+      iok = 0
       end
 
 !--------------------------------------------------------------
@@ -1477,6 +2178,246 @@
    22 if(c) 2,4,2
     2 return
       end
+
+!==============================================================
+!     SPIN DENSITY MATRIX ELEMENT (SDME) ANGULAR DISTRIBUTION
+!     Schilling-Wolf formalism for electroproduction
+!     Reference: K. Schilling, P. Seyboth, G. Wolf,
+!       Nucl. Phys. B 15, 397 (1970)
+!     HERMES: Eur. Phys. J. C 62, 659 (2009)
+!
+!     15-element SDME array r(15) ordering:
+!       r(1)  = r04_00        unpolarized (sigma_T + eps*sigma_L)
+!       r(2)  = Re r04_10
+!       r(3)  = r04_1-1
+!       r(4)  = r1_11         transverse linear pol. (cos 2Phi)
+!       r(5)  = r1_00
+!       r(6)  = Re r1_10
+!       r(7)  = r1_1-1
+!       r(8)  = Im r2_10      transverse linear pol. (sin 2Phi)
+!       r(9)  = Im r2_1-1
+!       r(10) = r5_11         T-L interference (cos Phi)
+!       r(11) = r5_00
+!       r(12) = Re r5_10
+!       r(13) = r5_1-1
+!       r(14) = Im r6_10      T-L interference (sin Phi)
+!       r(15) = Im r6_1-1
+!
+!     Angles (helicity frame):
+!       costh  = cos(Theta) of h+ in meson rest frame
+!       phid   = phi of h+ decay plane vs production plane
+!       Phi    = azimuth of production plane vs lepton plane
+!       eps    = virtual photon polarization parameter
+!==============================================================
+
+
+!==============================================================
+!     sdme_W: full angular distribution W(costh, phid, Phi)
+!     Returns the normalized W value (should be >= 0)
+!==============================================================
+      function sdme_W(costh, phid, aPhi, eps, r)
+      implicit real*8(a-h,o-z)
+      real*8 r(15), sdme_W
+
+      sinth2 = 1d0 - costh*costh
+      sinth  = sqrt(max(0d0, sinth2))
+      sin2th = 2d0*sinth*costh       ! sin(2*Theta)
+      cos2ph = cos(2d0*phid)
+      sin2ph = sin(2d0*phid)
+      cosph  = cos(phid)
+      sinph  = sin(phid)
+      cos2Phi = cos(2d0*aPhi)
+      sin2Phi = sin(2d0*aPhi)
+      cosPhi  = cos(aPhi)
+      sinPhi  = sin(aPhi)
+
+      sq2 = sqrt(2d0)
+
+!     ── W^0: unpolarized part (alpha=04) ──────────────────
+      w0 = 0.5d0*(1d0 - r(1)) &
+         + 0.5d0*(3d0*r(1) - 1d0)*costh*costh &
+         - sq2*r(2)*sin2th*cosph &
+         - r(3)*sinth2*cos2ph
+
+!     ── W^1: transverse lin. pol. (alpha=1, couples to cos2Phi)
+      w1 = r(4)*sinth2 + r(5)*costh*costh &
+         - sq2*r(6)*sin2th*cosph &
+         - r(7)*sinth2*cos2ph
+
+!     ── W^2: transverse lin. pol. (alpha=2, couples to sin2Phi)
+      w2 = sq2*r(8)*sin2th*sinph &
+         + r(9)*sinth2*sin2ph
+
+!     ── W^5: T-L interference (alpha=5, couples to cosPhi)
+      w5 = r(10)*sinth2 + r(11)*costh*costh &
+         - sq2*r(12)*sin2th*cosph &
+         - r(13)*sinth2*cos2ph
+
+!     ── W^6: T-L interference (alpha=6, couples to sinPhi)
+      w6 = sq2*r(14)*sin2th*sinph &
+         + r(15)*sinth2*sin2ph
+
+!     ── Full angular distribution ─────────────────────────
+!     W = (3/8pi^2) * { W0 - eps*cos2Phi*W1 - eps*sin2Phi*W2
+!                       + sqrt(2*eps*(1+eps))*cosPhi*W5
+!                       + sqrt(2*eps*(1+eps))*sinPhi*W6 }
+
+      eTL = sqrt(max(0d0, 2d0*eps*(1d0+eps)))
+
+      sdme_W = (3d0/(8d0*acos(-1d0)**2)) * ( &
+               w0 &
+             - eps*cos2Phi*w1 &
+             - eps*sin2Phi*w2 &
+             + eTL*cosPhi*w5 &
+             + eTL*sinPhi*w6 )
+
+!     Protect against small negative from numerics
+      if(sdme_W .lt. 0d0) sdme_W = 0d0
+
+      return
+      end
+
+
+!==============================================================
+!     sdme_Wmax: conservative upper bound for accept/reject
+!     Scans a coarse grid to find max of W, then adds 20% margin
+!==============================================================
+      function sdme_Wmax(eps, r)
+      implicit real*8(a-h,o-z)
+      real*8 r(15), sdme_Wmax, sdme_W
+      external sdme_W
+
+      aPI = acos(-1d0)
+      wmax_val = 0d0
+      nct  = 40
+      nphi = 40
+      nPHI = 40
+
+      do i = 0, nct
+        acosth = -1d0 + 2d0*dble(i)/dble(nct)
+        do j = 0, nphi
+          aphid = 2d0*aPI*dble(j)/dble(nphi)
+          do k = 0, nPHI
+            aPhiV = 2d0*aPI*dble(k)/dble(nPHI)
+            wval = sdme_W(acosth, aphid, aPhiV, eps, r)
+            if(wval .gt. wmax_val) wmax_val = wval
+          enddo
+        enddo
+      enddo
+
+!     Add 20% safety margin
+      sdme_Wmax = 1.2d0 * wmax_val
+      if(sdme_Wmax .lt. 1d-20) sdme_Wmax = 1d0
+
+      return
+      end
+
+
+!==============================================================
+!     calc_epsilon: virtual photon polarization parameter
+!       eps = (1 - y - y^2*Q^2/(4*nu^2))
+!           / (1 - y + y^2/2 + y^2*Q^2/(4*nu^2))
+!     Input: ebeam = beam energy, y = nu/ebeam, Q2
+!==============================================================
+      function calc_epsilon(ebeam, y, Q2)
+      implicit real*8(a-h,o-z)
+      real*8 calc_epsilon
+
+      anu = y*ebeam
+      if(anu.gt.1d-10) then
+        gamma2 = Q2/anu**2
+      else
+        calc_epsilon = 1d0
+        return
+      endif
+
+      anum = 1d0 - y - 0.25d0*y*y*gamma2
+      aden = 1d0 - y + 0.5d0*y*y + 0.25d0*y*y*gamma2
+
+      if(aden.gt.1d-10) then
+        calc_epsilon = anum/aden
+      else
+        calc_epsilon = 1d0
+      endif
+
+!     Physical bounds
+      calc_epsilon = max(0d0, min(1d0, calc_epsilon))
+
+      return
+      end
+
+
+!==============================================================
+!     sample_sdme_angles: Accept/reject MC sampling of (cosΘ, φ, Φ)
+!     from the full Schilling-Wolf W distribution.
+!
+!     Input:  eps    = virtual photon polarization
+!             r(15)  = SDME array
+!             iy     = random seed
+!             wmax   = upper bound on W (precomputed by sdme_Wmax)
+!     Output: costh  = cos(Theta) of h+ in helicity frame
+!             phid   = phi of h+ (decay plane vs production plane)
+!             aPhiOut= Phi (production plane vs lepton plane)
+!==============================================================
+      subroutine sample_sdme_angles(costh, phid, aPhiOut, &
+                                    eps, r, wmax, iy)
+      implicit real*8(a-h,o-z)
+      real*4 urand
+      real*8 r(15), sdme_W
+      external sdme_W
+      integer*4 iy
+
+      aPI = acos(-1d0)
+
+!     Accept/reject loop
+ 10   continue
+        costh   = 2d0*dble(urand(iy)) - 1d0
+        phid    = 2d0*aPI*dble(urand(iy))
+        aPhiOut = 2d0*aPI*dble(urand(iy))
+        rtest   = dble(urand(iy))
+
+        wval = sdme_W(costh, phid, aPhiOut, eps, r)
+
+        if(rtest*wmax .gt. wval) goto 10
+
+      return
+      end
+
+
+!==============================================================
+!     init_sdme: initialize SDME array to default values
+!     mode = 0: all zero (isotropic: W = 3/(8 pi^2) * 1/2)
+!     mode = 1: SCHC + NPE (photoproduction-like transverse)
+!     mode = 2: user-specified (no change, assumes r already set)
+!==============================================================
+      subroutine init_sdme(r, mode)
+      implicit real*8(a-h,o-z)
+      real*8 r(15)
+      integer mode
+
+!     Zero everything first
+      do i = 1, 15
+        r(i) = 0d0
+      enddo
+
+      if(mode.eq.1) then
+!       SCHC + NPE for photoproduction:
+!       r04_00 = 0  (no longitudinal photon)
+!       r1_11  = 1/2
+!       r1_1-1 = 1/2
+!       Im r2_1-1 = -1/2
+!       All others zero.
+!       This gives W0 ~ sin^2(Theta), with cos2Phi and sin2Phi
+!       modulations from the virtual photon transverse polarization
+        r(1)  = 0d0       ! r04_00
+        r(4)  = 0.5d0     ! r1_11
+        r(7)  = 0.5d0     ! r1_1-1
+        r(9)  = -0.5d0    ! Im r2_1-1
+      endif
+
+      return
+      end
+
 
       FUNCTION URAND(IY)
 !     LCG random number generator.

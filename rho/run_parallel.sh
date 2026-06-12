@@ -10,7 +10,7 @@ RC_INPUT="gen_input_rc.txt"
 COMPILE=true
 STATS_ONLY=false
 BORN_ONLY=false
-VERSION="akushevich"
+VERSION="vm"
 SRC_OVERRIDE=""
 LUND_OVERRIDE=""
 

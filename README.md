@@ -4,13 +4,26 @@ Monte Carlo generator for exclusive electroproduction of vector mesons
 (ρ, ω, φ, J/ψ) with QED radiative corrections based on the Akushevich
 formalism (Eur. Phys. J. C8, 457, 1999).
 
+## Source versions
+
+| File | Status |
+|---|---|
+| `diffrad_vm.f90` | **The supported production code.** Combined generator for all mesons (`ivec` in input file); tuned June 2026 cross-section defaults (phi: exponential t, bt=1.284; J/psi: dipole t, mg2=3.112), parameters overridable via input-file keys `alf1 alf2 alf3 nuT cR bt mg2`; `sig_hard_fix` RC scheme; SDME code; 64-bit counters. |
+| `diffrad_akushevich.f90` | Alternative physics model (original Akushevich cross sections), kept for comparison via `run_all.sh -version akushevich`. |
+| `diffrad_harut.f90` | Alternative physics model (Harut's cross sections), for comparison. |
+
+The tuning that produced the defaults lives in
+[vector_mesons_generator_tuning](https://github.com/vkubarovsky/vector_mesons_generator_tuning);
+its `combined/diffrad_vm.f90` is a frozen record of the tuning result —
+development continues only here.
+
 ---
 
 ## Directory Structure
 
 ```
 MC_vector_mesons/
-├── diffrad_gen.f90          # Main Fortran source (shared by all mesons)
+├── diffrad_vm.f90          # Main Fortran source (shared by all mesons)
 ├── README.md                # This file
 ├── rho/                     # ρ meson working directory
 │   ├── gen_input_born.dat   # Born-only input (ivec=1, cutv=0)
@@ -43,12 +56,12 @@ The `lund/` symlink in each meson directory points there transparently.
 
 ---
 
-## Generator Source: `diffrad_gen.f90`
+## Generator Source: `diffrad_vm.f90`
 
 Single Fortran 90 source file implementing the full RC generator.
 Compiled with:
 ```bash
-gfortran -ffree-line-length-none -std=legacy -fwrapv -w -O2 diffrad_gen.f90 -o diffrad_gen.exe
+gfortran -ffree-line-length-none -std=legacy -fwrapv -w -O2 diffrad_vm.f90 -o diffrad_gen.exe
 ```
 
 ### Key subroutines
@@ -176,7 +189,7 @@ Options:
   -no-compile        Skip compilation
 ```
 
-Compiles `../diffrad_gen.f90`, runs Born-only then full-RC, prints statistics.
+Compiles `../diffrad_vm.f90`, runs Born-only then full-RC, prints statistics.
 
 **Quick test:**
 ```bash
@@ -206,7 +219,7 @@ Options:
 
 **What it does (normal run):**
 1. Creates `~/Downloads/DIFFRAD_lund/{rho,phi}/` and `lund/` symlink
-2. Compiles `../diffrad_gen.f90`
+2. Compiles `../diffrad_vm.f90`
 3. Spawns N background jobs, each in `~/Downloads/DIFFRAD_lund/{rho,phi}/job_N/`
 4. Each job runs Born first, then RC sequentially (rc files appear after Born finishes)
 5. Each job gets a unique seed: `seed = 333522 + N × 100003`

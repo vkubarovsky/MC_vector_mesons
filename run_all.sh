@@ -12,7 +12,7 @@ LOGDIR="$ROOT/logs"
 
 NJOBS=10
 NEV=10000
-VERSION=""
+VERSION="vm"
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do

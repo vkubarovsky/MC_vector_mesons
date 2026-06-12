@@ -14,7 +14,7 @@
 
 set -e
 
-SRC="../diffrad_akushevich.f90"
+SRC="../diffrad_vm.f90"
 BORN_INPUT="gen_input_born.dat"
 RC_INPUT="gen_input_rc.dat"
 BORN_LUND="born_events.lund"
