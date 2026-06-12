@@ -18,6 +18,34 @@ The tuning that produced the defaults lives in
 its `combined/diffrad_vm.f90` is a frozen record of the tuning result —
 development continues only here.
 
+## Validation of the sig_hard_fix RC scheme (2026-06-12)
+
+The hard-photon fix (signed Bardin–Shumeiko remainder `sig_F` without the
+`max(0,·)` clamp; hard-event probability `(sig_F + ana_soft)/sig_total` with
+the analytic soft logarithm over `[vcut_ir, vmax]`, `vcut_ir = 1e-2 GeV²`;
+photon energy sampled by `sample_v_soft` from the `1/v` kernel weighted by
+the Born suppression at the shifted `W'² = W² − v`) was validated against
+independent runs (14 jobs × 1000 events, paired seeds):
+
+**J/ψ** (Ebeam 10.6, W 4.05–4.55, alf2=4.105, mg2=3.106): this code gives
+σ_Born = 269.2 ± 2.3 nb, σ_RC = 245.8 ± 2.1 nb, hard fraction 17.8% —
+reproducing the standalone reference generator
+(`jpsi/rc_test/sighard_fix`: 267.0 ± 1.9, 247.4 ± 1.7 nb, 17.9%) within
+statistics. η(W) of the fixed generator independently matches the exact
+`idiffrad` integration. Before the fix the J/ψ hard fraction was 0%
+(negative qqt remainder clamped to zero ⇒ no radiated photons).
+
+**φ** (Ebeam 10.6, RGA kinematics Q² 0.5–7): paired same-seed comparison
+pre-fix vs post-fix gives Δσ_RC = −0.34% ± 1.2% — the total rate is
+unchanged (the small shift is the removed clamp bias). The hard-event
+fraction rises 11% → 40% by construction: events with photon energy
+ω ≳ 5 MeV now carry an explicit radiated photon instead of being folded
+into the non-radiated sample; the photon spectrum follows the analytic
+`1/v` shape with threshold suppression.
+
+Raw validation outputs (scripts, per-job statistics) live in the tuning
+repo's local scratch `combined/validation/` (gitignored; conclusions here).
+
 ---
 
 ## Directory Structure
