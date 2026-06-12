@@ -1,0 +1,20 @@
+! DIFFRAD rho -- full RC cutv=1.2, Ebeam=10.6 GeV
+! -----------------------------------------------
+bmom    10.6        ! lepton beam momentum (GeV/c)
+tmom    0.0         ! target proton momentum (0 = fixed target)
+lepton  1           ! 1=electron, 2=muon
+ivec    1           ! 1=rho
+
+cutv    1.2         ! inelasticity cut (GeV^2)
+nev     10000       ! number of events
+iy      333522      ! random seed
+
+Q2      1.5   5.5               ! GeV^2
+y       0.1   0.8
+t       0.0   5.0               ! |t| min max (positive), GeV^2
+W       2.00  100.0             ! GeV
+xB      0.08  0.68
+
+tslope  4.0         ! exponential slope b in exp(-b*|t|),  GeV^-2
+
+iborn   0           ! 0=full RC

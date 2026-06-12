@@ -1,0 +1,65 @@
+ What is the logics of htis rad correction generator?
+ We started with born kinematics (ep-->e'p'rho).
+  - DO we paly kinematics with the Born cros sectio first?
+
+Then we sample v-distribution from zero to vmax.
+v = M^x^2-M_p^2.
+From v we calculate energy of the radiative photon.
+Then we decide form what electron it was radiated: from initial or final electron.
+Then we subttract that energy from electron energy and write to lund file. 
+
+And may be it is correct when photon radiated from the final electron. However when it is radiated from the initial electron 
+   the scatering kinematic is different and the final energy elactron will be changed as well.
+
+- What we have now in lund:        
+  initial electron just beam electron ALWAYS.
+  If photon is radiated from inition electron the final electron is the same as in the     
+  Born.
+  And we will end up with Born kinimatics. But radiation happened. Something is wrong in this starategy. let us talk      
+  about this.                                
+
+
+
+
+
+
+Yes! Now I can see the key issue clearly.                                                                                     
+                                         
+  Look at line 471:                                                                                                             
+  aq2_e = s*xs*ys
+                                                                                                                                
+  where s is from the common block — the ORIGINAL s = (k1+p)² computed with the full beam energy $E_1$. And xs = Q²/s, ys = y.
+                                                                                                                                
+  So even when called with ebeam = E_1 - E_\gamma (ISR case):                                                                   
+  - $E_2$ is correctly reduced: aEe2 = ebeam*(1-y) = (E_1-E_\gamma)(1-y) ✓                                                      
+  - But $Q^2$ is computed as: aq2_e = s*xs*ys = Q²_Born — the original Born $Q^2$                                               
+                                                                                 
+  This means for ISR the code builds:                                                                                           
+  - Reduced $E_2 = (E_1 - E_\gamma)(1-y)$ ✓                                                                                     
+  - But same $Q^2$ as Born ← inconsistency                                                                                      
+                                                                                                                                
+  The scattered electron angle is then forced to satisfy Born $Q^2$ with reduced $E_2$:                                         
+  acosthe = (2*E1_rc*E2_rc - 2*me² - Q²_Born) / (2|p1_rc||p2_rc|)                                                               
+                                                                                                                                
+  This gives a different angle than Born — but the $Q^2$ assigned is the Born value, not the true ISR $Q^2$.                    
+                                                                                                                                
+  ---                                                                                                                           
+  The correct ISR treatment should be:                                                                                          
+                                                            
+  When the ISR photon takes $E_\gamma$ from the beam, the hard vertex sees:
+  $$k_1' = k_1 - k_\gamma, \qquad Q^2_\text{true} = -(k_1' - k_2)^2$$                                                           
+                                                                                                                                
+  The sampled $(Q^2, y, t)$ are the Born values. For ISR they should be interpreted as the kinematics at the hadronic vertex, so
+   the true beam at the vertex is $E_1' = E_1 - E_\gamma$, and the scattered electron should have:                              
+  $$E_2 = E_1'(1-y), \qquad Q^2_\text{vertex} = E_1' \cdot E_2 \cdot y \cdot \text{factor} \neq Q^2_\text{Born}$$               
+                                                                                                                                
+  Practical impact for our kinematics:                                                                                          
+                                                                                                                                
+  $E_\gamma/E_1 \approx 40\text{ MeV}/33\text{ GeV} \approx 0.1%$ — the error is tiny.                                          
+                                                            
+  So the strategy is physically correct to ~0.1% for our narrow kinematics. The approximation breaks down only for large $v$    
+  (large $E_\gamma$).                                       
+                                                                                                                                
+  FSR is exact — no such issue, the hadronic vertex is unchanged.                                                               
+   
+  Does this match your concern? And do you want to fix the ISR kinematics to be exact?    

@@ -1,0 +1,28 @@
+# binaries and build artifacts
+*.exe
+*.o
+*.mod
+diffrad_gen
+diffrad_gen.old
+
+# editor backups
+*~
+*.bak*
+\#*\#
+.\#*
+
+# generated event files and run output
+*.lund
+born_events*
+rc_events*
+job_*/
+logs/
+*.log
+lund
+lund_vpk
+lund_akushevich
+lund_harut
+__pycache__/
+
+# OS
+.DS_Store

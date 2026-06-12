@@ -1,0 +1,32 @@
+! DIFFRAD J/psi -- full RC, Ebeam=10.6 GeV
+! -----------------------------------------------
+bmom    10.6        ! lepton beam momentum (GeV/c)
+tmom    0.0         ! target proton momentum (0 = fixed target)
+lepton  1           ! 1=electron, 2=muon
+ivec    4           ! 4=J/psi
+
+cutv    1.2         ! inelasticity cut (GeV^2)
+nev     10000       ! number of events
+iy      333522      ! random seed
+
+Q2      0.001   0.25            ! GeV^2
+y       0.79  0.99
+t       0.0   7.0               ! |t| min max (positive), GeV^2
+W       4.05  100.0             ! GeV (J/psi threshold ~4.035)
+xB      0.00001  0.016
+
+momentum_electron   0.1   2.5     ! p_e' of scattered electron
+theta_electron      2.0  20.0     ! theta_e' 
+
+momentum_proton     0.4   4.5     ! p' proton
+theta_proton        5.0  30.0     ! theta_p' 
+
+momentum_hplus      1.0   9.0     ! p_e+
+theta_hplus         5.0  40.0     ! theta_e+ 
+
+momentum_hminus     1.0   9.0     ! p_e-
+theta_hminus        5.0  40.0     ! theta_e-
+
+tslope  1.0         ! exponential slope b in exp(-b*|t|),  GeV^-2
+
+iborn   0           ! 0=full RC

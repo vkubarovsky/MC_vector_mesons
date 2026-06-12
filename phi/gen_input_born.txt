@@ -1,0 +1,20 @@
+! DIFFRAD phi -- Born only, Ebeam=10.6 GeV
+! -----------------------------------------------
+bmom    10.6        ! lepton beam momentum (GeV/c)
+tmom    0.0         ! target proton momentum (0 = fixed target)
+lepton  1           ! 1=electron, 2=muon
+ivec    3           ! 3=phi
+
+cutv    0.0         ! inelasticity cut (unused for Born)
+nev     10000        ! number of events
+iy      333522      ! random seed
+
+Q2      0.4   10.0               ! GeV^2
+y       0.25   0.9              ! Bhawani range
+t       0.2   8.0               ! |t| min max (positive), GeV^2
+W       2.00  100.0             ! GeV
+xB      0.001  0.6              ! Bhawani has no explicit xB cut
+
+tslope  2.0         ! exponential slope b in exp(-b*|t|),  GeV^-2
+
+iborn   1           ! 1=Born only

@@ -1,0 +1,26 @@
+! DIFFRAD input parameters
+! -----------------------------------------------
+
+! ---- Beam and particle ----
+bmom    27.5        ! lepton beam momentum (GeV/c)
+tmom    810.0       ! target proton momentum (GeV/c)
+lepton  1           ! 1=electron, 2=muon
+ivec    1           ! 1=rho, 2=omega, 3=phi, 4=J/psi
+
+! ---- Generator control ----
+cutv    0.0         ! inelasticity cut (for RC generator)
+nev     10000       ! number of events
+iy      333522      ! random seed
+
+! ---- Kinematic ranges: min  max ----
+Q2      2.0   6.0               ! GeV^2
+y       0.2   0.8
+t       0.1   1.0               ! |t| min max (positive), GeV^2
+W       2.0   100.0             ! GeV
+xB      0.01  0.5
+
+! ---- t distribution ----
+tslope  5.0         ! exponential slope b in exp(-b*|t|),  GeV^-2
+
+! ---- Physics switches ----
+iborn   0           ! 0=full RC, 1=Born
