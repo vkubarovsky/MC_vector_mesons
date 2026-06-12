@@ -9,8 +9,9 @@ formalism (Eur. Phys. J. C8, 457, 1999).
 | File | Status |
 |---|---|
 | `diffrad_vm.f90` | **The supported production code.** Combined generator for all mesons (`ivec` in input file); tuned June 2026 cross-section defaults (phi: exponential t, bt=1.284; J/psi: dipole t, mg2=3.112), parameters overridable via input-file keys `alf1 alf2 alf3 nuT cR bt mg2`; `sig_hard_fix` RC scheme; SDME code; 64-bit counters. |
-| `diffrad_akushevich.f90` | Alternative physics model (original Akushevich cross sections), kept for comparison via `run_all.sh -version akushevich`. |
+| `diffrad_akushevich.f90` | Alternative physics model (Akushevich cross sections), kept for comparison via `run_all.sh -version akushevich`. |
 | `diffrad_harut.f90` | Alternative physics model (Harut's cross sections), for comparison. |
+| `diffrad_gen_akushevich.f90` | **Original Akushevich code — reference, do not edit or delete.** |
 
 The tuning that produced the defaults lives in
 [vector_mesons_generator_tuning](https://github.com/vkubarovsky/vector_mesons_generator_tuning);
